@@ -1,0 +1,7 @@
+{
+    "job_hunt": "Emails regarding job applications, interview invites, or rejections.",
+    "career": "Professional development, LinkedIn alerts, or tech newsletters.",
+    "transactional": "Receipts, bills, bank statements, and ticket confirmations.",
+    "promotional": "Marketing, sales, and brand newsletters.",
+    "review": "Anything that doesn't fit the above; requires manual check."
+}

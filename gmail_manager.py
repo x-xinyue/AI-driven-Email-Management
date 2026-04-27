@@ -1,4 +1,7 @@
 import os.path
+import base64
+import re
+import requests
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -35,7 +38,7 @@ def get_gmail_service():
   return build("gmail", "v1", credentials=creds)
 
 
-def apply_label_to_email(service, creds, email_id, label_name):
+def apply_label_to_email(service, email_id, label_name):
   """
   Moves an email from INBOX to a specified label.
   If the label doesn't exist, it creates it first.
@@ -90,7 +93,8 @@ def create_label(service, label_name):
   return created_label
 
 
-def fetch_latest_emails(service, count=1):
+
+def fetch_latest_emails(service, count):
   """
   Fetches the latest emails from the user's inbox.
   """
@@ -98,22 +102,68 @@ def fetch_latest_emails(service, count=1):
     results = service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=count).execute()
     messages = results.get("messages", [])
 
+    emails_for_processing = []
+
     if not messages:
       print("No messages found.")
       return
     else:
-      print(f"Latest {count} emails:")
       for msg in messages:
         m = service.users().messages().get(userId="me", id=msg["id"], format="full").execute()
+
         payload = m["payload"]
         headers = payload.get("headers", [])
+
         subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
-        print(f"Email ID: {msg['id']} | Subject: {subject}")
+        sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown Sender")
+        body_snippet = m.get("snippet", "")
+        unsub_header = next((h["value"] for h in headers if h["name"].lower() == "list-unsubscribe"), None)
+
+        unsub_url = None
+        if unsub_header:
+          links = re.findall(r'<(http[^>]+)>', unsub_header)
+          if links:
+            unsub_url = links[0]
+
+        emails_for_processing.append({
+          "id": msg["id"],
+          "sender": sender,
+          "subject": subject,
+          "body_snippet": body_snippet,
+          "unsubscribe_url": unsub_url
+        })
+
+    return emails_for_processing
+      
   except HttpError as error:
     print(f"An error occurred: {error}")
 
 
-# if __name__ == "__main__":
-#   service = get_gmail_service()
-#   fetch_latest_emails(service, count=1)
-#   apply_label_to_email(service, None, "19dafc8eb1d6034a", "testing_label")
+def delete_email(service, email_id):
+  """
+  Moves an email to the trash.
+  """
+  try:
+    service.users().messages().trash(userId="me", id=email_id).execute()
+    print(f"Email {email_id} moved to trash.")
+  except Exception as e:
+    print(f"Failed to trash email: {e}")
+
+def unsubscribe_from_email(service, email_id, unsub_url):
+  """
+  Unsubscribes from an email using the provided unsubscribe URL.
+  """
+  try:
+    response = requests.get(unsub_url, timeout=5)
+    if response.status_code < 400:
+      print(f"Successfully unsubscribed using {unsub_url}")
+      delete_email(service, email_id)
+    else:
+      print(f"Unsubscribe link returned status {response.status_code}")
+  except Exception as e:
+    print(f"Failed to unsubscribe: {e}")
+
+if __name__ == "__main__":
+  service = get_gmail_service()
+  latest_emails = fetch_latest_emails(service, count=5)
+  print(latest_emails)

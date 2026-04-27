@@ -1,37 +1,33 @@
-import sqlite3
-import requests
+from gmail_manager import delete_email, get_gmail_service, apply_label_to_email, unsubscribe_from_email
 
 
-def execute_actions(actions, dry_run):
-    conn = sqlite3.connect('emails.db')
-    cursor = conn.cursor()
+def execute_actions(actions):
+    service = get_gmail_service()
 
     for action in actions:
-        if action['decision'] == 'keep':
-            cursor.execute("UPDATE emails SET status = 'KEPT' WHERE id = ?", (action['id'],))
-            continue
+        msg_id = action['id']
+        sender = action['sender']
+        subject = action['subject']
+        decision = action['decision']
+        category = action['category']
+        
+        if decision == 'keep':
+            label_map = {
+                'job_hunt': 'Job Hunt',
+                'career': 'Career',
+                'transactional': 'Transactional',
+                'promotional': 'Promotional'
+            }
+            label = label_map.get(category, 'Review')
+            apply_label_to_email(service, msg_id, label)
 
-        if dry_run:
-            print(f"[DRY RUN] Would {action['decision']} ID {action['id']}")
-            continue
-
-        # TRASH LOGIC
-        if action['decision'] in ['delete', 'unsubscribe']:
-            cursor.execute("UPDATE emails SET status = 'TRASHED' WHERE id = ?", (action['id'],))
-            print(f"✅ ID {action['id']} moved to trash.")
+        elif decision in ['delete', 'unsubscribe']:
+            delete_email(service, msg_id)
+            print(f"Email ID {action['id']} moved to trash.")
 
         # UNSUBSCRIBE LOGIC
         if action['decision'] == 'unsubscribe' and action['unsubscribe_url']:
-            try:
-                # Be careful: some links require a POST, but most work with a GET
-                r = requests.get(action['unsubscribe_url'], timeout=5)
-                if r.status_code < 400:
-                    print(f"🔕 Successfully hit unsubscribe for {action['sender']}")
-                else:
-                    print(f"⚠️ Unsubscribe link for {action['sender']} returned status {r.status_code}")
-            except Exception as e:
-                print(f"❌ Failed to unsubscribe from {action['sender']}: {e}")
+            unsubscribe_from_email(service, msg_id, action['unsubscribe_url'])
 
-    conn.commit()
-    conn.close()
+
     print("\nProcessing Complete.")
