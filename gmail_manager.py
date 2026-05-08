@@ -10,7 +10,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", 
+          "https://www.googleapis.com/auth/gmail.modify"]
 
 
 def get_gmail_service():
@@ -47,7 +48,7 @@ def apply_label_to_email(service, email_id, label_name):
   existing_labels = get_all_labels(service)
   label_id = None
   for label in existing_labels:
-    if label["id"] == label_name:
+    if label["name"].lower() == label_name.lower():
       label_id = label["id"]
       break
   else:
@@ -93,52 +94,62 @@ def create_label(service, label_name):
   return created_label
 
 
+import re
+from googleapiclient.errors import HttpError
 
-def fetch_latest_emails(service, count):
-  """
-  Fetches the latest emails from the user's inbox.
-  """
-  try:
-    results = service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=count).execute()
-    messages = results.get("messages", [])
+def fetch_emails(service, max_results=10, query=""):
+    """
+    Fetches emails based on a search query. 
+    If no query is provided, it just gets the latest emails.
+    """
+    try:
+        # We pass the raw query directly to 'q'
+        results = service.users().messages().list(
+            userId="me", 
+            labelIds=["INBOX"], # NOTE: Remove this if you want to include archived emails!
+            maxResults=max_results,
+            q=query
+        ).execute()
+        
+        messages = results.get("messages", [])
+        emails_for_processing = []
 
-    emails_for_processing = []
+        if not messages:
+            print(f"No messages found for query: '{query}'")
+            return []
+        
+        for msg in messages:
+            m = service.users().messages().get(userId="me", id=msg["id"], format="full").execute()
 
-    if not messages:
-      print("No messages found.")
-      return
-    else:
-      for msg in messages:
-        m = service.users().messages().get(userId="me", id=msg["id"], format="full").execute()
+            payload = m["payload"]
+            headers = payload.get("headers", [])
 
-        payload = m["payload"]
-        headers = payload.get("headers", [])
+            subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+            sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown Sender")
+            body_snippet = m.get("snippet", "")
+            unsub_header = next((h["value"] for h in headers if h["name"].lower() == "list-unsubscribe"), None)
 
-        subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
-        sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown Sender")
-        body_snippet = m.get("snippet", "")
-        unsub_header = next((h["value"] for h in headers if h["name"].lower() == "list-unsubscribe"), None)
+            unsub_url = None
+            if unsub_header:
+                links = re.findall(r'<(http[^>]+)>', unsub_header)
+                if links:
+                    unsub_url = links[0]
 
-        unsub_url = None
-        if unsub_header:
-          links = re.findall(r'<(http[^>]+)>', unsub_header)
-          if links:
-            unsub_url = links[0]
+            emails_for_processing.append({
+                "id": msg["id"],
+                "sender": sender,
+                "subject": subject,
+                "body_snippet": body_snippet,
+                "unsubscribe_url": unsub_url
+            })
+            
+        return emails_for_processing
 
-        emails_for_processing.append({
-          "id": msg["id"],
-          "sender": sender,
-          "subject": subject,
-          "body_snippet": body_snippet,
-          "unsubscribe_url": unsub_url
-        })
-
-    return emails_for_processing
-      
-  except HttpError as error:
-    print(f"An error occurred: {error}")
-
-
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+        return []
+    
+    
 def delete_email(service, email_id):
   """
   Moves an email to the trash.

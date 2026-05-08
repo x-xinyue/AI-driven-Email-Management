@@ -1,6 +1,6 @@
 {
-    "job_hunt": "Emails regarding job applications, interview invites, or rejections.",
-    "career": "Professional development, LinkedIn alerts, or tech newsletters.",
+    "job_hunt": "Emails regarding any job application UPDATES, job offer, interview invites, or rejections. (NOTE: Not to be confused with 'career' which is for general professional development content. This category is specifically for job seeking and updates.)",
+    "career": "LinkedIn alerts, career alerts, and tech newsletters. NOTE: Not to be confused with 'job_hunt' which is for active job seekers.",
     "transactional": "Receipts, bills, bank statements, and ticket confirmations.",
     "promotional": "Marketing, sales, and brand newsletters.",
     "review": "Anything that doesn't fit the above; requires manual check."

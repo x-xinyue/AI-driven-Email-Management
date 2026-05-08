@@ -1,8 +1,9 @@
 from collections import defaultdict
 import json
+import time
 from db_manager import query_database, update_preferences, setup_database, populate_database
 from executor import execute_actions
-from gmail_manager import get_gmail_service, fetch_latest_emails
+from gmail_manager import get_gmail_service, fetch_emails
 from llm_engine import get_llm_decision
 
 
@@ -15,7 +16,7 @@ with open("user_preferences.json", "r") as f:
 populate_database(collection, user_preferences, [f"rule_{i}" for i in range(len(user_preferences))])
 
 
-def process_emails():
+def process_emails(n=10, specific_day_query=None):
     """
     Main function to process emails.
 
@@ -28,7 +29,7 @@ def process_emails():
     """
     # 1. FETCH UNPROCESSED EMAILS
     service = get_gmail_service()
-    emails = fetch_latest_emails(service, count=1)  # change when testing is done
+    emails = fetch_emails(service, max_results=n, query=specific_day_query)
     print(f"Fetched {len(emails)} emails for processing.")
 
     if not emails:
@@ -53,6 +54,7 @@ def process_emails():
         # 3. LLM CALL
         email_data = {'sender': sender, 'subject': subject, 'body_snippet': body_snippet}
         res_data = get_llm_decision(email_data, relevant_rule)
+        time.sleep(1)  # Short pause to respect rate limits and avoid overwhelming the LLM
 
         # TODO: update google sheet if email is categorised as job_hunt
 
@@ -69,7 +71,11 @@ def process_emails():
             "decision": res_data['decision'].lower(),
             "reason": res_data['reason'],
             "unsubscribe_url": unsub_url,
-            "category": res_data['category']
+            "category": res_data['category'],
+            "confidence_score": res_data['confidence_score'],
+            "company_name": res_data.get('company_name'),
+            "job_role": res_data.get('job_role'),
+            "status_update": res_data.get('status_update')
         }
 
         if res_data['category'].lower() in ['job_hunt', 'career', 'transactional']:
@@ -91,6 +97,8 @@ def process_emails():
 
     if proposed_rules:
         confirmation_action(collection, proposed_rules, actions_to_take)
+    
+    
         
 
 
@@ -120,17 +128,26 @@ def confirmation_action(collection, proposed_rules, actions_to_take):
     if choice.lower() == 'all':
         final_actions = actions_to_take
         approved_senders = [r['sender'] for r in rule_map.values()]
-    elif choice.lower() == 'none':
-        print("No rules approved. No changes will be made.")
-        return
     else:
-        selected_indices = [int(x.strip()) for x in choice.split(',')]
-        for idx in selected_indices:
-            rule = rule_map[idx]
-            approved_senders.append(rule['sender'])
-            # Filter actions_to_take to only include approved ones
-            final_actions.extend([a for a in actions_to_take if a['sender'] == rule['sender']])
+        # 1. Gather the senders the user actually approved
+        if choice.lower() != 'none':
+            try:
+                selected_indices = [int(x.strip()) for x in choice.split(',')]
+                for idx in selected_indices:
+                    if idx in rule_map:
+                        approved_senders.append(rule_map[idx]['sender'])
+            except ValueError:
+                print("Invalid input detected. Defaulting to 'none'.")
 
+        # 2. Process ALL actions, but downgrade unapproved ones to 'keep'
+        for action in actions_to_take:
+            if action['sender'] in approved_senders:
+                # The user approved the LLM's proposed destructive action
+                final_actions.append(action)
+            else:
+                # The user did NOT approve. We override the LLM's decision.
+                action['decision'] = 'keep'
+                final_actions.append(action)
     # 4. DYNAMIC RAG UPDATE (The most important part!)
     if approved_senders:
         update_preferences(collection, approved_senders, rule_map)
@@ -138,9 +155,4 @@ def confirmation_action(collection, proposed_rules, actions_to_take):
     if final_actions:
         print("\nExecuting approved actions...")
         execute_actions(final_actions)
-        # print("Promo emails Executed!")
         
-
-
-if __name__ == "__main__":
-    process_emails()    

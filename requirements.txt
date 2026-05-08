@@ -1,0 +1,12 @@
+# --- Google APIs (Gmail & Sheets) ---
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+
+# --- LLM & Vector Database ---
+google-genai
+chromadb
+ollama
+
+# --- Utilities ---
+requests
