@@ -1,7 +1,7 @@
 import json
 
-from gmail_manager import fetch_emails, get_gmail_service
-from llm_engine import get_llm_decision
+from integrations.gmail_manager import fetch_emails, get_gmail_service
+from llm.llm_engine import get_llm_decision
 
 
 def test_classification():

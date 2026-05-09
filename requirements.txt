@@ -5,8 +5,11 @@ google-auth-httplib2
 
 # --- LLM & Vector Database ---
 google-genai
-chromadb
+pgvector
 ollama
 
 # --- Utilities ---
 requests
+
+# -- UI --
+streamlit

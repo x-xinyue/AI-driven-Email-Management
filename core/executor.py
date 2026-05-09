@@ -1,5 +1,10 @@
-from gmail_manager import delete_email, get_gmail_service, apply_label_to_email, unsubscribe_from_email
-from spreadsheet_manager import upsert_job_entry, get_spreadsheet_service
+"""
+5. Execute approved actions (e.g., delete, unsubscribe) and update the RAG database with any new confirmed rules for future automation
+"""
+
+
+from integrations.gmail_manager import delete_email, get_gmail_service, apply_label_to_email, unsubscribe_from_email
+from integrations.spreadsheet_manager import upsert_job_entry, get_spreadsheet_service
 
 
 def execute_actions(actions):

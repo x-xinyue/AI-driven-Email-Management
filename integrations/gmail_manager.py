@@ -97,7 +97,7 @@ def create_label(service, label_name):
 import re
 from googleapiclient.errors import HttpError
 
-def fetch_emails(service, max_results=10, query=""):
+def fetch_emails(service, total_emails, query=""):
     """
     Fetches emails based on a search query. 
     If no query is provided, it just gets the latest emails.
@@ -107,7 +107,7 @@ def fetch_emails(service, max_results=10, query=""):
         results = service.users().messages().list(
             userId="me", 
             labelIds=["INBOX"], # NOTE: Remove this if you want to include archived emails!
-            maxResults=max_results,
+            maxResults=total_emails,
             q=query
         ).execute()
         
