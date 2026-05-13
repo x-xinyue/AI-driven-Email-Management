@@ -30,15 +30,12 @@ def save_preferences(db_docs: list, db_ids: list):
     vector_store.add_texts(texts=db_docs, ids=db_ids)
 
 
-def find_relevant_preference(query_text: str, n_results=1):
-    """
-    Searches for
-    """
+def find_relevant_preferences(query_text: str, n_results=3):
     results = vector_store.similarity_search(query_text, k=n_results)
     
     if results:
-        # Results return Document objects, so we grab the page_content
-        return results[0].page_content
+        # Join all the retrieved rules into one string with bullet points
+        return "\n".join([f"- {doc.page_content}" for doc in results])
     return "No specific user preference found."
 
 

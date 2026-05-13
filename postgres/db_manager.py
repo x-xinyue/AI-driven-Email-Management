@@ -93,3 +93,29 @@ def reject_action(action_id):
     conn.commit()
     cur.close()
     conn.close()
+
+
+def get_past_delete_count(sender):
+    """
+    Counts how many times the user has approved deleting emails from this sender.
+    Used to build the 'Closed-Loop Memory' for proactive unsubscribing.
+    """
+    conn = connect_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT COUNT(*) FROM pending_actions
+            WHERE sender = %s
+            AND decision = 'delete'
+            AND status = 'APPROVED'
+        """, (sender,))
+        
+        count = cur.fetchone()[0]
+        return count
+    except Exception as e:
+        print(f"Database error in get_past_delete_count: {e}")
+        return 0
+    finally:
+        cur.close()
+        conn.close()

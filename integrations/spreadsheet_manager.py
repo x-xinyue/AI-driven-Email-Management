@@ -6,13 +6,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# If modifying these scopes, delete the file token.json.
+
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", 
           "https://www.googleapis.com/auth/gmail.modify"]
-
-# The ID and range of a sample spreadsheet.
-SAMPLE_SPREADSHEET_ID = "1A52Egh3s8BfkwaL5L1o6mvacDvqTVxr7cqiKBZcBCVw"
-SAMPLE_RANGE_NAME = "Applications 2026!A1:U21"
 
 
 def get_spreadsheet_service():
@@ -38,34 +34,6 @@ def get_spreadsheet_service():
   return build("sheets", "v4", credentials=creds)
 
 
-def get_spreadsheet_data(service):
-  """Shows basic usage of the Sheets API.
-  Prints values from a sample spreadsheet.
-  """
-
-  try:
-
-    # Call the Sheets API
-    sheet = service.spreadsheets()
-    result = (
-        sheet.values()
-        .get(spreadsheetId="1A52Egh3s8BfkwaL5L1o6mvacDvqTVxr7cqiKBZcBCVw", range="Applications 2026!A1:U")
-        .execute()
-    )
-    values = result.get("values", [])
-
-    if not values:
-      print("No data found.")
-      return
-
-    print("found data:")
-    for row in values:
-      # Print columns A and E, which correspond to indices 0 and 4.
-      print(row)
-  except HttpError as err:
-    print(err)
-
-
 def normalize(text):
    return text.strip().lower() if text else ""
 
@@ -87,15 +55,14 @@ def find_existing_job_entry(rows, company_name, job_role):
             
     return None
 
+
 def append_row(service, spreadsheet_id, range_name, row_values):
     """
     Appends a row of values to the specified Google Sheet.
     """
     try:
         sheet = service.spreadsheets()
-        body = {
-            "values": [row_values]
-        }
+        body = {"values": [row_values]}
         result = (
             sheet.values()
             .append(
@@ -104,79 +71,59 @@ def append_row(service, spreadsheet_id, range_name, row_values):
                 valueInputOption="RAW",
                 insertDataOption="INSERT_ROWS",
                 body=body
-            )
-            .execute()
+            ).execute()
         )
         print(f"{result.get('updates').get('updatedCells')} cells appended.")
     except HttpError as err:
         print(f"An error occurred: {err}")
 
+
 def update_stage_logic(service, spreadsheet_id, sheet_name, row_num, action):
     """
     Updates specific cells in an existing row using dictionary access.
     """
+    status = action.get('status_update', "Applied")
+    if status:
+        status = str(status).strip().title()
+    
     data = [
-        {"range": f"{sheet_name}!O{row_num}", "values": [[action['status_update']]]},
-        {"range": f"{sheet_name}!Q{row_num}", "values": [[action['reason']]]},
-        {"range": f"{sheet_name}!S{row_num}", "values": [[action['status_update']]]}
+        {"range": f"{sheet_name}!O{row_num}", "values": [[status]]},
+        {"range": f"{sheet_name}!Q{row_num}", "values": [[action.get('reason', '')]]},
+        {"range": f"{sheet_name}!S{row_num}", "values": [[status]]}
     ]
     
-    body = {
-        "valueInputOption": "RAW",
-        "data": data
-    }
+    body = {"valueInputOption": "USER_ENTERED", "data": data}
     
-    service.spreadsheets().values().batchUpdate(
-        spreadsheetId=spreadsheet_id, body=body
-    ).execute()
+    service.spreadsheets().values().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+
 
 def upsert_job_entry(service, spreadsheet_id, sheet_name, action):
     """
-    Upserts a job entry in the Google Sheet. If an entry with the same job title exists, it updates that row; otherwise, it appends a new row.
+    Upserts a job entry in the Google Sheet.
+    If an entry with the same job title exists, it updates that row; otherwise, it appends a new row.
     """
     # Fetch current data
     range_to_check = f"{sheet_name}!A:U"
-    result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=range_to_check
-    ).execute()
+    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_to_check).execute()
     rows = result.get("values", [])
 
     # Search for existing entry
-    existing_row_num = find_existing_job_entry(rows, action['company_name'], action['job_role'])
+    existing_row_num = find_existing_job_entry(rows, action['company'], action['position'])
 
     if existing_row_num:
-        print(f"📍 Match: {action['company_name']} found at Row {existing_row_num}. Updating status.")
+        print(f"Match: {action['company']} found at Row {existing_row_num}. Updating status.")
         # Update O (14), Q (16), and S (18)
         update_stage_logic(service, spreadsheet_id, sheet_name, existing_row_num, action)
     
     else:
-        print(f"🆕 No match: Appending {action['company_name']} as a new entry.")
+        print(f"No match: Appending {action['company']} as a new entry.")
         new_row = [""] * 21
-        new_row[0] = action['job_role']       # Col A: Position
-        new_row[1] = action['company_name']   # Col B: Company
-        new_row[14] = action['status_update'] # Col O: Status
-        new_row[16] = action['reason'][:200]       # Col Q: Latest word
-        new_row[18] = action['status_update'] # Col S: Job Application Status
+        new_row[0] = action['position']         # Col A: Position
+        new_row[1] = action['company']          # Col B: Company
+        new_row[2] = action.get('industry')     # Col C: is Industry
+        new_row[4] = action.get('location')     # Col E: is Location
+        new_row[6] = action.get('date_applied') # Col G: is Date Applied
+        new_row[14] = action['status_update']   # Col O: Status
+        new_row[16] = action['reason'][:200]    # Col Q: Latest word
         
         append_row(service, spreadsheet_id, f"{sheet_name}!A1", new_row)
-
-
-if __name__ == "__main__":
-    service = get_spreadsheet_service()
-  
-    # Define your spreadsheet details
-    SHEET_ID = "1A52Egh3s8BfkwaL5L1o6mvacDvqTVxr7cqiKBZcBCVw"
-    SHEET_NAME = "Applications 2026"
-
-    # TEST 1: A brand new application
-    # Format: [Date, Company, Role, Location, ... 16 empty cols ..., Status]
-    new_app = ["2026-04-30", "Axrail", "AI Engineer", "Subang Jaya"] + ([""] * 16) + ["Applied"]
-
-    print("--- Running Test 1 (New Entry) ---")
-    upsert_job_entry(service, SHEET_ID, SHEET_NAME, new_app)
-
-    # TEST 2: Update the same application (should NOT create a new row)
-    updated_app = ["2026-04-30", "Axrail", "AI Engineer", "Subang Jaya"] + ([""] * 16) + ["Interview Scheduled"]
-
-    print("\n--- Running Test 2 (Status Update) ---")
-    upsert_job_entry(service, SHEET_ID, SHEET_NAME, updated_app)

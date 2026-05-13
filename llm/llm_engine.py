@@ -1,103 +1,121 @@
-import time
-from typing import Optional
 import os
-from enum import Enum
-from google import genai
-from google.genai import types
+
 from dotenv import load_dotenv
+from enum import Enum
 from pydantic import BaseModel, Field
+from typing import Optional, List
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
-# 1. Load environment variables
+
 load_dotenv()
-API_KEY = os.getenv("GOOGLE_API_KEY")
 
-if not API_KEY:
-    raise ValueError("GOOGLE_API_KEY not found in .env!")
-
-client = genai.Client(api_key=API_KEY)
 
 class CategoryEnum(str, Enum):
-    job_hunt = "job_hunt"
     career = "career"
-    transactional = "transactional"
+    job_hunt = "job_hunt"
     promotional = "promotional"
     review = "review"
+    transactional = "transactional"
+
+
+class StatusEnum(str, Enum):
+    applied = "applied"
+    assessment = "assessment"
+    interview = "interview"
+    rejection = "rejection"
+    offer = "offer"
+    
 
 
 class EmailDecision(BaseModel):
+    email_id: str = Field(description="The unique ID of the email from the input list")  # for processor.py to map results back to original emails
     category: CategoryEnum = Field(description="The category of the email")
     decision: str = Field(description="Must be: keep, delete, or unsubscribe")
     reason: str = Field(description="A short explanation for the user")
     confidence_score: float = Field(description="0.0 to 1.0 accuracy estimate")
 
-    company_name: Optional[str] = Field(None, description="The name of the company (e.g., Axrail, Maxis, Shopee)")
-    job_role: Optional[str] = Field(None, description="The specific job title mentioned (e.g., Data Analyst, Graduate Trainee)")
-    status_update: Optional[str] = Field(None, description="The stage of the application: Applied, Assessment, Interviewing, Rejected, or Offer")
+    # Career extraction fields
+    position: Optional[str] = Field(None, description="The specific job title mentioned (e.g., Data Analyst, Graduate Trainee)")
+    company: Optional[str] = Field(None, description="The name of the company (e.g., Axrail, Maxis, Shopee)")
+    industry: Optional[str] = Field(None, description="The industry of the company (e.g., Tech, Consulting, Finance)")
+    location: Optional[str] = Field(None, description="The job location (e.g., KL, Subang Jaya, Remote)")
+    date_applied: Optional[str] = Field(None, description="The date of the email")
+    status_update: Optional[StatusEnum] = Field(None, description="The current application stage")
+
+
+class BatchEmailDecision(BaseModel):
+    """
+    Container for multiple email decisions to ensure a single batch JSON response.
+    """
+    decisions: List[EmailDecision]
 
 
 def get_llm_decision(email_data, user_pref):
     """
-    Categorizes emails using the latest google-genai SDK.
+    Categorizes emails using LangChain and Google Gemini.
     """
-    system_instruction = """
-    ROLE: You are Astra, a logical Email Management Assistant.
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.1-flash-lite-preview", 
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        temperature=0
+    )
 
-    TASK: Categorize the incoming email into one of the following categories.
+    structured_llm = llm.with_structured_output(BatchEmailDecision)
+
+    system_instruction = f"""
+    ROLE: You are a logical Email Management Assistant.
+
+    TASK: Categorize the batch of emails into the defined categories.
 
     CONTEXT & DEFINITIONS:
-    - job_hunt: Emails regarding any job application UPDATES, job offers, interview invites, or rejections. NOTE: This is specifically for active job seeking.
-    - career: LinkedIn alerts, job alerts (automated), and tech newsletters. NOTE: Not to be confused with 'job_hunt' which is for personal application updates.
-    - transactional: Receipts, bills, bank statements, and ticket confirmations.
+    - job_hunt: Emails regarding any job application UPDATES, job offers, interview invites, or rejections. (NOTE: This is specifically for active job seeking)
+    - career: Automated job alerts, newsletters, or generic job postings. (NOTE: Not to be confused with 'job_hunt' which is for personal job application updates)
+    - transactional: Receipts, bills, bank statements, and confirmations.
     - promotional: Marketing, sales, and brand newsletters.
     - review: Anything that doesn't fit the above.
 
-    EXTRACTION RULES (Only for 'job_hunt'):
-    1. COMPANY_NAME: Identify the employer.
-    2. JOB_ROLE: Identify the position name.
-    3. STATUS_UPDATE: Determine the current state:
-       - 'Applied': Confirmation of receipt.
-       - 'Assessment': Link to a technical test or HackerRank.
-       - 'Interviewing': Invite for a screen or technical round.
-       - 'Rejected': Application unsuccessful.
-       - 'Offer': Employment offer received.
+    EXTRACTION RULES (only for 'job_hunt'):
+    1. POSITION: Identify the job role name.
+    2. COMPANY: Identify the company's name.
+    3. INDUSTRY: Use your internal knowledge to identify the company's sector e.g., 'Consulting'.
+    4. LOCATION: Extract the city or 'Remote' from the text. If unknown, use your internal knowledge to identify the company's office location e.g., KL, PJ.
+    3. DATE_APPLIED RULES:
+        - Look for a specific date mentioned in the Snippet e.g., 'I applied on April 5th'.
+        - If no specific date is mentioned in the text, use the 'Timestamp' provided for that email.
+        - ALWAYS return the date in the format: MMM-DD-YYYY e.g., 'May-11-2026'.
+    4. Set STATUS_UPDATE ONLY to one of these exact values to match my spreadsheet dropdown:
+       - 'applied': Confirmation of receipt.
+       - 'assessment': Link to a technical test e.g., HackerRank.
+       - 'interview': Invite for a screen or technical round.
+       - 'rejection': Application unsuccessful.
+       - 'offer': Employment offer received.
 
     CONSTRAINTS:
+    - Every email ID provided MUST have a corresponding decision in the list.
     - Prioritize 'job_hunt' if the email is a direct response to the user.
-    - Use the user's preference for promotional items: {user_pref}
-    - Respond ONLY in valid JSON.
+    - Use the user's preference for promotional items: {user_pref} (FOLLOW EXACTLY, if unsure just choose to delete.)
     """
 
-    prompt = f"""
-    Sender: {email_data['sender']}
-    Subject: {email_data['subject']}
-    Body Snippet: {email_data['body_snippet']}
-    """
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.1-flash-lite-preview",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_json_schema=EmailDecision.model_json_schema(),
-                ),
-            )
-            return response.parsed
-        
-        except Exception as e:
-            if "503" in str(e) and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            
-            else:
-                print(f"Error with Gemini API: {e}")
-                return EmailDecision(
-                    category=CategoryEnum.review,
-                    decision="keep",
-                    reason=f"System Error: {str(e)}",
-                    confidence_score=0.0
-                )
-    
+    batch_text = "Emails to analyze:\n\n"
+    for email in email_data:
+        batch_text += (
+            f"Email_ID: {email['id']}\n"
+            f"Timestamp: {email.get('date_received')}\n"
+            f"Sender: {email['sender']}\n"
+            f"Subject: {email['subject']}\n"
+            f"Snippet: {email['body_snippet']}\n"
+            "---\n"
+        )
 
+    messages = [
+        SystemMessage(content=system_instruction),
+        HumanMessage(content=batch_text)
+    ]
+
+    try:
+        response = structured_llm.invoke(messages)
+        return response.decisions
+    except Exception as e:
+        print(f"Error with LLM: {e}")
+        return []
